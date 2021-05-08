@@ -6,6 +6,7 @@ import (
     "bufio"
     "os"
     "log"
+    "regexp"
     "github.com/gookit/color"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -101,6 +102,15 @@ func CreateTable(prog_name string) {
             log.Fatal(err)
         }
         defer database.Close()
+        //regex check on program name, dont anyone breaking their databases 
+        program_name_regex := regexp.MustCompile("^[a-zA-Z0-9]*$")
+        if program_name_regex.FindStringIndex(prog_name) != nil  {
+            fmt.Print("valid name\n")
+        } else {
+            fmt.Print(program_name_regex.FindString(prog_name))
+            fmt.Print("Program name must be a single word with no spaces, or symbols.\nExample: Program1\n\nExiting...\n")
+            os.Exit(1)
+        }
         //check if table already exists (queries tables and does a comparison)
         doesTableExist, err := database.Query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
         if err != nil {
