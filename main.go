@@ -6,6 +6,7 @@ import (
     "bufio"
     "os"
     "log"
+    "github.com/gookit/color"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -18,7 +19,18 @@ import (
 //   List   - used to list databases
 //
 // scan usage: $ assetspy scan <db-name>
-func ManageUpdateInsertData(prog_name string, endpoints_path string){
+func DBInsertData(prog_name string, endpoints_path string){
+    //if progname is table + endpoints exists: do insert data into table
+    //else error
+    //check if specified endpoints files exists
+    if _, err := os.Stat("./" + endpoints_path); err == nil {
+        fmt.Print("Endpoints selected: " + endpoints_path + "\n")
+        os.Exit(1)
+    } else {
+        fmt.Print("You need to specify a program name and path to your endpoints file\n" +
+                "Usage:\n" +
+                "\t$ assetspy manage foobar endpoints.txt\n")
+    }
     fmt.Print("Insertin'\n")
     //open endpoints.txt for reading
     endpoints_file, err := os.Open(endpoints_path)
@@ -47,50 +59,87 @@ func ManageUpdateInsertData(prog_name string, endpoints_path string){
     //}
 }
 
-func ManageUpdate(prog_name string, endpoints_path string) {
+func CreateDB(prog_name string, endpoints_path string) {
     //check if db directory has been deleted for some reason
-    if _, err := os.Stat("./dbs"); os.IsNotExist(err){
-        fmt.Print("Seems your database directory (./dbs) was deleted... Creating a new one.\n")
-        newdb := os.MkdirAll("./dbs", 0755)
+    if _, err := os.Stat("./db"); os.IsNotExist(err){
+        fmt.Print("Seems your database directory (./db) was deleted... Creating a new one.\n")
+        newdb := os.MkdirAll("./db", 0755)
         if newdb != nil {
             log.Fatal(err)
         }
         fmt.Print("Database directory created!.\n")
     }
     //check if db exists?
-    if _, err := os.Stat("./dbs/assetspy-database.db"); err == nil {
-		//check if specified endpoints files exists
-        if _, err := os.Stat("./" + endpoints_path); err == nil {
-            fmt.Print("Endpoints selected: " + endpoints_path + "\n")
-            ManageUpdateInsertData(prog_name, endpoints_path)
-			os.Exit(1)
-		} else {
-			fmt.Print("DB exists, but assetspy needs a list of endpoints to update the db with\n" +
-					"Usage:\n" +
-					"\t$ assetspy manage foobar endpoints.txt\n")
-        }
-	} else {
+    if _, err := os.Stat("./db/assetspy-database.db"); err == nil {
+		return
+    } else {
         // this code runs if the db doesnt exists. Creates a db for program
-        fmt.Print("Creating a new database for assetspy...")
-        database, err := os.Create("./dbs/assetspy-database.db")
+        fmt.Print("Creating a new database for assetspy...\n")
+        database, err := os.Create("./db/assetspy-database.db")
         if err != nil {
             log.Fatal(err)
         }
         database.Close()
-        fmt.Print("Database created, you can now add programs and endpoints!")
-		//create tables
-		//statement, _ := database.Prepare("CREATE TABLE IF NOT EXISTS foobar (id INTEGER PRIMARY KEY, endpoint TEXT, request TEXT, response TEXT)")
-		//statement.Exec()
-        //fmt.Print("created table...")
+        fmt.Print("Database created, you can now add programs and endpoints!\n" + 
+                "Usage:\n" +
+                "*note: program name must be one word, and only letters A-Z, a-z*\n" +
+                "\n\t$ assetspy manage update ExampleProgramName /path/to/endpoints.txt\n")
 	}
 }
-// function that lists databases created by the user
+func CreateTable(prog_name string) {
+    //if db doesnt exist tell the user how to create it
+    if _, err := os.Stat("./db/assetspy-database.db"); os.IsNotExist(err) {
+        fmt.Print("Error: you havent created a database for assetspy yet!\n" +
+        "To create a database:\n" +
+        "\t$ assetspy manage update\n" +
+        "\nAfter running the above, re-run this command to add a program to the database.\n" +
+        "\t$ assetspy manage update example\n")
+    } else {
+    //if db does exist, then take the progname and create a table with it
+        database, err := sql.Open("sqlite3", "./db/assetspy-database.db")
+        if err != nil {
+            log.Fatal(err)
+        }
+        defer database.Close()
+        //check if table already exists (queries tables and does a comparison)
+        doesTableExist, err := database.Query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+        if err != nil {
+            log.Fatal(err)
+        }
+        defer doesTableExist.Close()
+        var table string
+        for doesTableExist.Next() {
+            err := doesTableExist.Scan(&table)
+            if err != nil {
+                log.Fatal(err)
+            }
+            if table == prog_name {
+                fmt.Print("Program already exists in database!\nExiting!\n")
+                os.Exit(1)
+            }
+        }
+        statement, err := database.Prepare("CREATE TABLE IF NOT EXISTS " + prog_name +" (id INTEGER PRIMARY KEY, endpoint TEXT, request TEXT, response TEXT)")
+        if err != nil {
+            fmt.Print("Adding a program to the database failed.\n" +
+                "\t1. The program could already be in the database\n" +
+                "\t2. You are trying a name like \"foo bar\". It must be one word like foobar\n\n")
+            log.Fatal(err)
+        }
+        statement.Exec()
+        fmt.Print(prog_name + " added to database!\n")
+    }
+}
+// function that lists tables (programs) in the database
 func ListDatabases(prog_name string, request string){
     switch {
         //case to handle $ assetspy list
         case len(prog_name) > 0:
-            fmt.Print("Targets you're managing:\n")
-            database, _ := sql.Open("sqlite3", "./dbs/assetspy-database.db")
+            fmt.Print("\nTargets you're managing:\n\n")
+            database, err := sql.Open("sqlite3", "./db/assetspy-database.db")
+            if err != nil {
+                log.Fatal(err)
+            }
+            defer database.Close()
             //query all tables in DB
             res, err := database.Query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
             if err != nil {
@@ -98,12 +147,13 @@ func ListDatabases(prog_name string, request string){
             }
             defer res.Close()
             var table string
+
             for res.Next() {
                 err := res.Scan(&table)
                 if err != nil {
                     log.Fatal(err)
                 }
-                log.Println("\t" + table)
+                fmt.Println("\t" + table)
             }
             err = res.Err()
             if err != nil {
@@ -114,20 +164,36 @@ func ListDatabases(prog_name string, request string){
 
 
 func main() {
+    ToolNameColor := color.New(color.Bold, color.Yellow)
+    StepsColor := color.New(color.Bold, color.Red)
     if len(os.Args) == 1 {
-        fmt.Print("to get started run:\n" +
-        "\t$ assetspy manage update\n" +
-        "\t$ assetspy manage list\n" +
-        "\t$ assetspy scan \n" +
-        "\t$ assetspy diff\n")
+        ToolNameColor.Print("\n-- AssetSpy --\n")
+        StepsColor.Print("\nFirst time usage steps:\n")
+        StepsColor.Print("\nStep 1: Create a database:\n")
+        fmt.Print("\t$ assetspy manage update\n")
+        StepsColor.Print("\nStep 2: Add Programs to your database:    *note: program names must be one word!*\n")
+        fmt.Print("\t$ assetspy manage update ExampleProgramName\n")
+        StepsColor.Print("\nStep 3: Add endpoints for monitoring to your program\n")
+        fmt.Print("\t$ assetspy manage update ExampleProgramName /path/to/endpoints.txt\n")
+        StepsColor.Print("\nStep 4: Run a scan against your program. This has many options, see more scan options below\n")
+        fmt.Print("\t$ assetspy scan ExampleProgramName all\n")
+        StepsColor.Print("\nStep 5: Re-Scan at a later date:\n")
+        fmt.Print("\t$ assetspy scan ExampleProgramName all\n")
+        StepsColor.Print("\nStep 6: Run diff to generate a report highlighting changes in the responses\n")
+        fmt.Print("\t$ assetspy diff ExampleProgrmName <date> <date>\n\n")
         os.Exit(1)
     }
     if len(os.Args[1:]) == 1 {
-        fmt.Print("try one of the following:\n" +
+        fmt.Print("\n-- AssetSpy --\n" +
+        "\nFirst time usage steps:\n" +
+        "\nStep 1: Create a database:\n" +
         "\t$ assetspy manage update\n" +
-        "\t$ assetspy manage list\n" +
-        "\t$ assetspy scan \n" +
-        "\t$ assetspy diff\n")
+        "\nStep 2: Add Programs to your database:    *note: program names must be one word!*\n" +
+        "\t$ assetspy manage update ExampleProgramName\n" +
+        "\nStep 3: Add endpoints for monitoring to your program\n" +
+        "\t$ assetspy manage update ExampleProgramName /path/to/endpoints.txt\n" +
+        "\nStep 4: Run a scan against your program. This has many options, see more scan options below\n" +
+        "\t$ assetspy scan ExampleProgramName\n")
         os.Exit(1)
     }
 
@@ -171,20 +237,17 @@ func main() {
         case arg1 == "manage":
             // handles "manage update"
             if(arg2 == "update" && len(arg3) == 0){
-                ManageUpdate("","none")
+                CreateDB("","none")
             }
             // handles "manage update <program>"
-            if(arg2 == "update" && len(arg3) > 0){
-                fmt.Print("Mode selected: manage update\n")
-                if len(arg4) > 0 {
-					ManageUpdate(arg3, arg4)
-				}
+            if(arg2 == "update" && len(arg3) > 0 && len(arg4) == 0){
+                CreateTable(arg3)
             }
             // handles "manage list"
             if(arg2 == "list"){
                 fmt.Print("Mode selected: manage list\n")
                 // runs ListDBs
-                ListDatabases("","")
+                ListDatabases("f","")
             }
 
         case arg1 == "scan": //scan handler
