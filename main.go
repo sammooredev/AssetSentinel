@@ -7,6 +7,7 @@ import (
     "os"
     "log"
     "regexp"
+//    "strconv"
     "github.com/gookit/color"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -26,13 +27,19 @@ func DBInsertData(prog_name string, endpoints_path string){
     //check if specified endpoints files exists
     if _, err := os.Stat("./" + endpoints_path); err == nil {
         fmt.Print("Endpoints selected: " + endpoints_path + "\n")
-        os.Exit(1)
+
     } else {
         fmt.Print("You need to specify a program name and path to your endpoints file\n" +
                 "Usage:\n" +
                 "\t$ assetspy manage foobar endpoints.txt\n")
     }
-    fmt.Print("Insertin'\n")
+    // opening database
+    database, err := sql.Open("sqlite3", "./db/assetspy-database.db")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer database.Close()
+
     //open endpoints.txt for reading
     endpoints_file, err := os.Open(endpoints_path)
     if err != nil {
@@ -41,23 +48,13 @@ func DBInsertData(prog_name string, endpoints_path string){
     defer endpoints_file.Close()
 
     scanner := bufio.NewScanner(endpoints_file)
+    // for endpoints in endpoints.txt
     for scanner.Scan() {
-        fmt.Println(scanner.Text())
+        // insert endpoint into database
+        // prepare query
+        statement, _ := database.Prepare("INSERT INTO " + prog_name + " (endpoint) VALUES (?)")
+        statement.Exec(scanner.Text())
     }
-    if err := scanner.Err(); err != nil {
-        log.Fatal(err)
-    }
-    //statement, _ = database.Prepare("INSERT INTO ReqAndResp (Request, Response) VALUES (?, ?)")
-	//statement.Exec("foo1", "foo2")
-
-	//rows, _ := database.Query("SELECT id, endpoint, request, response FROM ReqAndResp")
-	//var id int
-	//var Request string
-	//var Response string
-	//for rows.Next() {
-	//	rows.Scan(&id, &Request, &Response)
-	//	fmt.Println("id: " + strconv.Itoa(id) + "\n" + "endpoint: " + endpoint + "request: " + request + "\nresponse: " + response)
-    //}
 }
 
 func CreateDB(prog_name string, endpoints_path string) {
@@ -81,9 +78,9 @@ func CreateDB(prog_name string, endpoints_path string) {
             log.Fatal(err)
         }
         database.Close()
-        fmt.Print("Database created, you can now add programs and endpoints!\n" + 
+        fmt.Print("Database created, you can now add programs and endpoints!\n" +
                 "Usage:\n" +
-                "*note: program name must be one word, and only letters A-Z, a-z*\n" +
+                "*note: program name must be one word, and only letters A-Z, a-z, 0-9*\n" +
                 "\n\t$ assetspy manage update ExampleProgramName /path/to/endpoints.txt\n")
 	}
 }
@@ -128,7 +125,7 @@ func CreateTable(prog_name string) {
                 os.Exit(1)
             }
         }
-        statement, err := database.Prepare("CREATE TABLE IF NOT EXISTS " + prog_name +" (id INTEGER PRIMARY KEY, endpoint TEXT, request TEXT, response TEXT)")
+        statement, err := database.Prepare("CREATE TABLE IF NOT EXISTS " + prog_name +" (id INTEGER PRIMARY KEY, endpoint TEXT)")
         if err != nil {
             fmt.Print("Adding a program to the database failed.\n" +
                 "\t1. The program could already be in the database\n" +
@@ -141,14 +138,15 @@ func CreateTable(prog_name string) {
 }
 // function that lists tables (programs) in the database
 func ListDatabases(prog_name string, request string){
+    database, err := sql.Open("sqlite3", "./db/assetspy-database.db")
+    defer database.Close()
+    if err != nil {
+            log.Fatal(err)
+    }
     switch {
         //case to handle $ assetspy list
-        case len(prog_name) > 0:
+        case len(prog_name) == 0 && len(request) == 0:
             fmt.Print("\nTargets you're managing:\n\n")
-            database, err := sql.Open("sqlite3", "./db/assetspy-database.db")
-            if err != nil {
-                log.Fatal(err)
-            }
             defer database.Close()
             //query all tables in DB
             res, err := database.Query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
@@ -168,6 +166,17 @@ func ListDatabases(prog_name string, request string){
             err = res.Err()
             if err != nil {
                 log.Fatal(err)
+            }
+        // case to handle $ asset spy list <program> endpoints
+        case len(prog_name) > 0 && request == "endpoints":
+            fmt.Print("\nEndpoints in " + prog_name + ": \n\n")
+            // print endpoints
+            rows, _ := database.Query("SELECT id, endpoint FROM " + prog_name)
+            var id int
+            var endpoint string
+            for rows.Next() {
+	        rows.Scan(&id, &endpoint)
+	        fmt.Println(endpoint)
             }
     }
 }
@@ -253,11 +262,23 @@ func main() {
             if(arg2 == "update" && len(arg3) > 0 && len(arg4) == 0){
                 CreateTable(arg3)
             }
+            // handles "manage update <program> /path/to/endpoints.txt"
+            if (arg2 == "update" && len(arg3) > 0 && len(arg4) > 0) {
+                DBInsertData(arg3, arg4)
+            }
             // handles "manage list"
-            if(arg2 == "list"){
+            if(arg2 == "list" && len(arg3) == 0){
                 fmt.Print("Mode selected: manage list\n")
                 // runs ListDBs
-                ListDatabases("f","")
+                ListDatabases("", "")
+            }
+            // handles "manage list <program>"
+            if(arg2 == "list" && len(arg3) > 1 && len(arg4) == 0) {
+                ListDatabases(arg3, "placeholder")
+            }
+            // handles "manage list <program> endpoint"
+            if(arg2 == "list" && len(arg3) > 1 && len(arg4) > 1) {
+                ListDatabases(arg3, arg4)
             }
 
         case arg1 == "scan": //scan handler
